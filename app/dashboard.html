@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Satya Parihara</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b2430; --mute:#667085; --line:#e4e7ec; --accent:#1f6feb; --good:#127a46; --bad:#b42318; --warn:#b54708; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#10151c; --card:#18202b; --ink:#e6eaf0; --mute:#98a2b3; --line:#2a3544; --accent:#58a6ff; --good:#4ade80; --bad:#f87171; --warn:#fbbf24; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui,sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:20px 16px 48px; }
+  h1 { font-size:22px; margin:0 0 2px; } h2 { font-size:16px; margin:0 0 10px; }
+  .sub { color:var(--mute); margin:0 0 16px; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:8px 12px; font:inherit; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .kpi b { display:block; font-size:26px; } .kpi span { color:var(--mute); font-size:13px; }
+  .good b { color:var(--good); } .bad b { color:var(--bad); }
+  .cols { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:12px; }
+  @media (max-width:520px) { .cols { grid-template-columns:1fr; } }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--mute); font-weight:600; font-size:12px; text-transform:uppercase; }
+  .wrap { overflow-x:auto; } .empty { color:var(--mute); padding:6px 0; }
+  #msg { color:var(--mute); align-self:center; font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Satya Parihara</h1>
+  <p class="sub">Citizen-verified grievance closure and Hotspot Radar</p>
+  <div class="bar">
+    <button id="run">Run verifications</button>
+    <button class="ghost" id="run4">Advance 5h and run</button>
+    <button class="ghost" id="shadow">Run shadow baseline</button>
+    <button class="ghost" id="refresh">Refresh</button>
+    <span id="msg"></span>
+  </div>
+  <div class="grid" id="kpis"></div>
+  <div class="cols">
+    <section class="card"><h2>Reopened tickets</h2><div class="wrap" id="reopened"></div></section>
+    <section class="card"><h2>Needs supervisor review</h2><div class="wrap" id="review"></div></section>
+    <section class="card"><h2>Hotspots (3+ similar complaints)</h2><div class="wrap" id="hotspots"></div></section>
+    <section class="card"><h2>Officer true resolution rate</h2><div class="wrap" id="officers"></div></section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pct = v => v == null ? "–" : Math.round(v * 100) + "%";
+
+function table(head, rows) {
+  if (!rows.length) return '<div class="empty">None</div>';
+  return "<table><tr>" + head.map(h => "<th>" + h + "</th>").join("") + "</tr>" +
+    rows.map(r => "<tr>" + r.map(c => "<td>" + esc(c) + "</td>").join("") + "</tr>").join("") + "</table>";
+}
+function kpi(label, value, cls) { return '<div class="card kpi ' + (cls || "") + '"><b>' + esc(value) + "</b><span>" + esc(label) + "</span></div>"; }
+
+async function load() {
+  const m = await (await fetch("/metrics")).json();
+  const b = m.baseline, sc = m.status_counts;
+  $("kpis").innerHTML =
+    kpi("Citizen-confirmed rate", pct(m.confirmed_rate), "good") +
+    kpi("False-closure rate", pct(m.false_closure_rate), "bad") +
+    kpi("Verification reach", pct(m.reach)) +
+    kpi("Reopened tickets fixed", pct(m.reopened_fixed_rate)) +
+    kpi("Cost per verification", m.cost_per_verification == null ? "–" : "₹" + m.cost_per_verification) +
+    kpi("Unverifiable", m.unverifiable) +
+    kpi("Baseline false-closure (shadow)", pct(b.false_closure_rate)) +
+    kpi("Awaiting verification", sc.pending_verification || 0);
+  $("reopened").innerHTML = table(["Ticket","Issue","Ward","Officer","Level","Now with"],
+    m.reopened.map(t => [t.id, t.category, t.ward, t.officer, t.escalation_level, t.escalated_to]));
+  $("review").innerHTML = table(["Ticket","Issue","Ward","Supervisor"], m.supervisor_review.map(t => [t.id, t.category, t.ward, t.supervisor]));
+  $("hotspots").innerHTML = table(["Place","Issue","Tickets","Unresolved"], m.hotspots.slice(0, 10).map(h => [h.place, h.issue, h.tickets, h.unresolved]));
+  $("officers").innerHTML = table(["Officer","Answered","Confirmed","Rate"], m.officers.map(o => [o.officer, o.answered, o.confirmed, pct(o.true_resolution_rate)]));
+}
+async function act(url, label) {
+  $("msg").textContent = label + "…";
+  const r = await (await fetch(url, { method: "POST" })).json();
+  $("msg").textContent = JSON.stringify(r);
+  await load();
+}
+$("run").onclick = () => act("/verifications/run", "Running");
+$("run4").onclick = () => act("/verifications/run?advance_hours=5", "Running");
+$("shadow").onclick = () => act("/verifications/run?shadow=true", "Running shadow");
+$("refresh").onclick = load;
+load();
+</script>
+</body>
+</html>
